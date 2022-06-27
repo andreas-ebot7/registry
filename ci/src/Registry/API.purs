@@ -784,12 +784,16 @@ runGit_ args cwd = void $ runGit args cwd
 runGit :: Array String -> Maybe FilePath -> ExceptT String Aff String
 runGit args cwd = ExceptT do
   result <- Process.spawn { cmd: "git", args, stdin: Nothing } (NodeProcess.defaultSpawnOptions { cwd = cwd })
+  let
+    stdout = String.trim result.stdout
+    stderr = String.trim result.stderr
   case result.exit of
     NodeProcess.Normally 0 -> do
-      info result.stdout
-      info result.stderr
-      pure $ Right $ String.trim result.stdout
-    _ -> pure $ Left $ String.trim result.stderr
+      unless (String.null stdout) (info stdout)
+      pure $ Right stdout
+    _ -> do
+      unless (String.null stderr) (error stderr)
+      pure $ Left stderr
 
 -- | The absolute maximum bytes allowed in a package
 maxPackageBytes :: Number
