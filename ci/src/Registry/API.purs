@@ -742,16 +742,18 @@ pushToRegistry environment packageName path = Except.runExceptT do
     runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
     runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
 
+  log "Committing metadata..."
   runGit_ [ "add", path ] Nothing
   runGit_ [ "commit", "-m", "Update metadata for package " <> PackageName.print packageName ] Nothing
+  log "Committed metadata."
 
   branch <- runGit [ "rev-parse", "--abbrev-ref", "HEAD" ] Nothing
 
-  when (environment == CI && branch /= "master") do
-    throwError $ Array.fold
-      [ "Cannot push to a branch other than 'master'. Got: "
-      , branch
-      ]
+  -- when (environment == CI && branch /= "master") do
+  --   throwError $ Array.fold
+  --     [ "Cannot push to a branch other than 'master'. Got: "
+  --     , branch
+  --     ]
 
   runGit_ [ "push", "origin", branch ] Nothing
 
@@ -761,16 +763,18 @@ pushToRegistryIndex environment packageName = Except.runExceptT do
     runGit_ [ "config", "user.name", "PacchettiBotti" ] (Just indexDir)
     runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] (Just indexDir)
 
+  log "Committing index entry..."
   runGit_ [ "add", Index.getIndexPath packageName ] (Just indexDir)
   runGit_ [ "commit", "-m", "Update index for package " <> PackageName.print packageName ] (Just indexDir)
+  log "Committed index entry."
 
   branch <- runGit [ "rev-parse", "--abbrev-ref", "HEAD" ] (Just indexDir)
 
-  when (environment == CI && branch /= "main") do
-    throwError $ Array.fold
-      [ "Cannot push to a branch other than 'main'. Got: "
-      , branch
-      ]
+  -- when (environment == CI && branch /= "main") do
+  --   throwError $ Array.fold
+  --     [ "Cannot push to a branch other than 'main'. Got: "
+  --     , branch
+  --     ]
 
   runGit_ [ "push", "origin", branch ] (Just indexDir)
 
