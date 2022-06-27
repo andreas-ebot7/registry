@@ -612,7 +612,7 @@ mkEnv :: Environment -> GitHub.Octokit -> MetadataRef -> IssueNumber -> Env
 mkEnv environment octokit packagesMetadata issue =
   { comment: GitHub.createComment octokit issue
   , closeIssue: GitHub.closeIssue octokit issue
-  , commitToTrunk: pushToMaster
+  , commitToTrunk: pushToRegistry
   , commitToRegistryIndex: pushToRegistryIndex
   , uploadPackage: Upload.upload
   , deletePackage: Upload.delete
@@ -736,8 +736,8 @@ gitGetRefTime ref repoDir = do
     Left err -> Aff.throwError $ Aff.error $ "Failed to get ref time: " <> err
     Right res -> pure res
 
-pushToMaster :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
-pushToMaster environment packageName path = Except.runExceptT do
+pushToRegistry :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
+pushToRegistry environment packageName path = Except.runExceptT do
   when (environment == CI) do
     runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
     runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
@@ -745,26 +745,34 @@ pushToMaster environment packageName path = Except.runExceptT do
   runGit_ [ "add", path ] Nothing
   runGit_ [ "commit", "-m", "Update metadata for package " <> PackageName.print packageName ] Nothing
 
-  -- We don't push when running locally. This lets us double-check our work.
-  when (environment == CI) do
-    runGit_ [ "push", "origin", "master" ] Nothing
+  branch <- runGit [ "rev-parse", "--abbrev-ref", "HEAD" ] Nothing
+
+  when (environment == CI && branch /= "master") do
+    throwError $ Array.fold
+      [ "Cannot push to a branch other than 'master'. Got: "
+      , branch
+      ]
+
+  runGit_ [ "push", "origin", branch ] Nothing
 
 pushToRegistryIndex :: Environment -> PackageName -> Aff (Either String Unit)
 pushToRegistryIndex environment packageName = Except.runExceptT do
   when (environment == CI) do
-    runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
-    runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
+    runGit_ [ "config", "user.name", "PacchettiBotti" ] (Just indexDir)
+    runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] (Just indexDir)
 
-  let
-    runRegistryGit args = runGit_ args (Just indexDir)
-    packagePath = Index.getIndexPath packageName
+  runGit_ [ "add", Index.getIndexPath packageName ] (Just indexDir)
+  runGit_ [ "commit", "-m", "Update index for package " <> PackageName.print packageName ] (Just indexDir)
 
-  runRegistryGit [ "add", packagePath ]
-  runRegistryGit [ "commit", "-m", "Update index for package " <> PackageName.print packageName ]
+  branch <- runGit [ "rev-parse", "--abbrev-ref", "HEAD" ] (Just indexDir)
 
-  -- We don't push when running locally. This lets us double-check our work.
-  when (environment == CI) do
-    runRegistryGit [ "push", "origin", "main" ]
+  when (environment == CI && branch /= "main") do
+    throwError $ Array.fold
+      [ "Cannot push to a branch other than 'main'. Got: "
+      , branch
+      ]
+
+  runGit_ [ "push", "origin", branch ] (Just indexDir)
 
 runGit_ :: Array String -> Maybe FilePath -> ExceptT String Aff Unit
 runGit_ args cwd = void $ runGit args cwd

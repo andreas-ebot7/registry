@@ -145,7 +145,7 @@ mkEnv :: Environment -> Ref (Map PackageName Metadata) -> Env
 mkEnv environment packagesMetadata =
   { comment: \err -> error err
   , closeIssue: log "Skipping GitHub issue closing, we're running locally.."
-  , commitToTrunk: API.pushToMaster
+  , commitToTrunk: API.pushToRegistry
   , commitToRegistryIndex: API.pushToRegistryIndex
   , uploadPackage: Upload.upload
   , deletePackage: Upload.delete
