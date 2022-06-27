@@ -51,7 +51,7 @@ import Registry.Json as Json
 import Registry.PackageName (PackageName)
 import Registry.PackageName as PackageName
 import Registry.PackageUpload as Upload
-import Registry.RegistryM (Env, RegistryM, closeIssue, comment, commitToRegistryIndex, commitToTrunk, deletePackage, readPackagesMetadata, runRegistryM, throwWithComment, updatePackagesMetadata, uploadPackage)
+import Registry.RegistryM (Env, Environment(..), RegistryM, closeIssue, comment, commitToRegistryIndex, commitToTrunk, deletePackage, readPackagesMetadata, runRegistryM, throwWithComment, updatePackagesMetadata, uploadPackage)
 import Registry.SSH as SSH
 import Registry.Schema (AuthenticatedData(..), AuthenticatedOperation(..), BuildPlan(..), Location(..), Manifest(..), Metadata, Operation(..), UpdateData, addVersionToMetadata, isVersionInMetadata, mkNewMetadata, unpublishVersionInMetadata)
 import Registry.Scripts.LegacyImport.Error (ImportError(..))
@@ -64,9 +64,14 @@ import Text.Parsing.StringParser as StringParser
 
 main :: Effect Unit
 main = launchAff_ $ do
-  eventPath <- liftEffect do
-    Env.lookupEnv "GITHUB_EVENT_PATH"
-      >>= maybe (throw "GITHUB_EVENT_PATH not defined in the environment") pure
+  eventPath <- liftEffect $ Env.lookupEnv "GITHUB_EVENT_PATH" >>= case _ of
+    Nothing -> throw "GITHUB_EVENT_PATH not defined in the environment"
+    Just value -> pure value
+
+  environment <- liftEffect $ Env.lookupEnv "CI" >>= case _ of
+    Just "true" -> pure CI
+    _ -> pure Local
+
   octokit <- liftEffect GitHub.mkOctokit
   packagesMetadata <- mkMetadataRef
   fetchRegistryIndex
@@ -78,7 +83,7 @@ main = launchAff_ $ do
     NotJson ->
       pure unit
 
-    MalformedJson issue err -> runRegistryM (mkEnv octokit packagesMetadata issue) do
+    MalformedJson issue err -> runRegistryM (mkEnv environment octokit packagesMetadata issue) do
       comment $ Array.fold
         [ "The JSON input for this package update is malformed:"
         , newlines 2
@@ -88,7 +93,7 @@ main = launchAff_ $ do
         ]
 
     DecodedOperation issue op ->
-      runRegistryM (mkEnv octokit packagesMetadata issue) (runOperation op)
+      runRegistryM (mkEnv environment octokit packagesMetadata issue) (runOperation op)
 
 data OperationDecoding
   = NotJson
@@ -603,8 +608,8 @@ wget url path = do
     NodeProcess.Normally 0 -> pure unit
     _ -> throwWithComment $ "Error while fetching tarball: " <> result.stderr
 
-mkEnv :: GitHub.Octokit -> MetadataRef -> IssueNumber -> Env
-mkEnv octokit packagesMetadata issue =
+mkEnv :: Environment -> GitHub.Octokit -> MetadataRef -> IssueNumber -> Env
+mkEnv environment octokit packagesMetadata issue =
   { comment: GitHub.createComment octokit issue
   , closeIssue: GitHub.closeIssue octokit issue
   , commitToTrunk: pushToMaster
@@ -612,6 +617,7 @@ mkEnv octokit packagesMetadata issue =
   , uploadPackage: Upload.upload
   , deletePackage: Upload.delete
   , packagesMetadata
+  , environment
   }
 
 type MetadataMap = Map PackageName Metadata
@@ -730,27 +736,38 @@ gitGetRefTime ref repoDir = do
     Left err -> Aff.throwError $ Aff.error $ "Failed to get ref time: " <> err
     Right res -> pure res
 
-pushToMaster :: PackageName -> FilePath -> Aff (Either String Unit)
-pushToMaster packageName path = Except.runExceptT do
-  _ <- runGit [ "config", "user.name", "PacchettiBotti" ] Nothing
-  _ <- runGit [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
-  _ <- runGit [ "add", path ] Nothing
-  _ <- runGit [ "commit", "-m", "Update metadata for package " <> PackageName.print packageName ] Nothing
-  _ <- runGit [ "push", "origin", "master" ] Nothing
-  pure unit
+pushToMaster :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
+pushToMaster environment packageName path = Except.runExceptT do
+  when (environment == CI) do
+    runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
+    runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
 
-pushToRegistryIndex :: PackageName -> Aff (Either String Unit)
-pushToRegistryIndex packageName = Except.runExceptT do
-  _ <- runGit [ "config", "user.name", "PacchettiBotti" ] Nothing
-  _ <- runGit [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
+  runGit_ [ "add", path ] Nothing
+  runGit_ [ "commit", "-m", "Update metadata for package " <> PackageName.print packageName ] Nothing
+
+  -- We don't push when running locally. This lets us double-check our work.
+  when (environment == CI) do
+    runGit_ [ "push", "origin", "master" ] Nothing
+
+pushToRegistryIndex :: Environment -> PackageName -> Aff (Either String Unit)
+pushToRegistryIndex environment packageName = Except.runExceptT do
+  when (environment == CI) do
+    runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
+    runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
 
   let
-    runRegistryGit args = void $ runGit args (Just indexDir)
+    runRegistryGit args = runGit_ args (Just indexDir)
     packagePath = Index.getIndexPath packageName
 
   runRegistryGit [ "add", packagePath ]
   runRegistryGit [ "commit", "-m", "Update index for package " <> PackageName.print packageName ]
-  runRegistryGit [ "push", "origin", "main" ]
+
+  -- We don't push when running locally. This lets us double-check our work.
+  when (environment == CI) do
+    runRegistryGit [ "push", "origin", "main" ]
+
+runGit_ :: Array String -> Maybe FilePath -> ExceptT String Aff Unit
+runGit_ args cwd = void $ runGit args cwd
 
 runGit :: Array String -> Maybe FilePath -> ExceptT String Aff String
 runGit args cwd = ExceptT do

@@ -14,16 +14,16 @@ import Dotenv as Dotenv
 import Effect.Aff as Aff
 import Foreign.GitHub as GitHub
 import Foreign.Object as Object
+import Node.Process as Env
 import Registry.API as API
 import Registry.Index (RegistryIndex)
-import Registry.Index as Index
 import Registry.Json (printJson)
 import Registry.Json as Json
 import Registry.PackageGraph as Graph
 import Registry.PackageName (PackageName)
 import Registry.PackageName as PackageName
 import Registry.PackageUpload as Upload
-import Registry.RegistryM (Env, readPackagesMetadata, runRegistryM, updatePackagesMetadata)
+import Registry.RegistryM (Env, Environment(..), readPackagesMetadata, runRegistryM, updatePackagesMetadata)
 import Registry.Schema (BuildPlan(..), Location(..), Manifest(..), Metadata, Operation(..))
 import Registry.Scripts.LegacyImport.Error (APIResource(..), ImportError(..), ManifestError(..), PackageFailures(..), RemoteResource(..), RequestError(..))
 import Registry.Scripts.LegacyImport.Manifest as Manifest
@@ -44,6 +44,20 @@ import Text.Parsing.StringParser as StringParser
 main :: Effect Unit
 main = Aff.launchAff_ do
   _ <- Dotenv.loadFile
+
+  environment <- liftEffect $ Env.lookupEnv "CI" >>= case _ of
+    Just "true" -> do
+      log "WARNING\n  Running in the 'CI' environment.\n--------------------"
+      pure CI
+    Just "false" -> do
+      log "Running in the 'Local' environment.\n--------------------"
+      pure Local
+    _ -> unsafeCrashWith
+      """
+      Please set the 'CI' environment variable in your .env file or manually via
+      export CI=<true|false> when running the registry importer. Only set this
+      variable to 'true' if you wish to write directly to the registry repository.
+      """
 
   API.fetchRegistryIndex
 
@@ -89,7 +103,7 @@ main = Aff.launchAff_ do
   packagesMetadataRef <- API.mkMetadataRef
 
   log "Starting upload..."
-  runRegistryM (mkEnv packagesMetadataRef) do
+  runRegistryM (mkEnv environment packagesMetadataRef) do
     log "Adding metadata for reserved package names"
     forWithIndex_ (Map.union disabledPackages reservedNames) \package repo -> do
       let metadata = { location: repo, owners: Nothing, published: Map.empty, unpublished: Map.empty }
@@ -104,7 +118,7 @@ main = Aff.launchAff_ do
       wasPackageUploaded { name, version } = API.isPackageVersionInMetadata name version packagesMetadata
       packagesToUpload = Array.filter (\package -> not (wasPackageUploaded package || disabled package)) availablePackages
 
-    log "Uploading packages to the registry backend..."
+    log "Uploading packages using the 'addition' operation..."
     -- We need to use `for` here instead of `for_`, because the `Foldable` class
     -- isn't stack-safe.
     void $ for packagesToUpload \manifest -> do
@@ -125,29 +139,18 @@ main = Aff.launchAff_ do
       log "----------------------------------------------------------------------"
       API.runOperation addition
 
-    log "Writing the registry-index on disk..."
-    -- While insertions are usually done as part of the API operation, we don't
-    -- yet commit and push to the registry-index repository. For that reason, we
-    -- write to disk here and can manually commit the result upstream if desired.
-    let packagesToIndex = Array.filter (not disabled) availablePackages
-    void $ for packagesToIndex \manifest ->
-      liftAff $ Index.insertManifest API.indexDir $ Manifest manifest
-
   log "Done!"
 
-mkEnv :: Ref (Map PackageName Metadata) -> Env
-mkEnv packagesMetadata =
+mkEnv :: Environment -> Ref (Map PackageName Metadata) -> Env
+mkEnv environment packagesMetadata =
   { comment: \err -> error err
   , closeIssue: log "Skipping GitHub issue closing, we're running locally.."
-  , commitToTrunk: \_ _ -> do
-      log "Skipping committing to trunk.."
-      pure (Right unit)
-  , commitToRegistryIndex: \_ -> do
-      log "Skipping committing to registry index..."
-      pure (Right unit)
+  , commitToTrunk: API.pushToMaster
+  , commitToRegistryIndex: API.pushToRegistryIndex
   , uploadPackage: Upload.upload
   , deletePackage: Upload.delete
   , packagesMetadata
+  , environment
   }
 
 downloadLegacyRegistry :: Aff { registry :: RegistryIndex, reservedNames :: Map PackageName Location }

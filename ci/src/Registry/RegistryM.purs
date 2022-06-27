@@ -12,14 +12,19 @@ import Registry.PackageName (PackageName)
 import Registry.PackageUpload as Upload
 import Registry.Schema (Metadata)
 
+data Environment = CI | Local
+
+derive instance Eq Environment
+
 type Env =
   { comment :: String -> Aff Unit
   , closeIssue :: Aff Unit
-  , commitToTrunk :: PackageName -> FilePath -> Aff (Either String Unit)
-  , commitToRegistryIndex :: PackageName -> Aff (Either String Unit)
+  , commitToTrunk :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
+  , commitToRegistryIndex :: Environment -> PackageName -> Aff (Either String Unit)
   , uploadPackage :: Upload.PackageInfo -> FilePath -> Aff Unit
   , deletePackage :: Upload.PackageInfo -> Aff Unit
   , packagesMetadata :: Ref (Map PackageName Metadata)
+  , environment :: Environment
   }
 
 newtype RegistryM a = RegistryM (ReaderT Env Aff a)
@@ -57,13 +62,15 @@ throwWithComment body = comment body *> Aff.throwError (Aff.error body)
 commitToTrunk :: PackageName -> FilePath -> RegistryM (Either String Unit)
 commitToTrunk packageName path = do
   f <- asks _.commitToTrunk
-  liftAff $ f packageName path
+  env <- asks _.environment
+  liftAff $ f env packageName path
 
 -- | Commit a change to the default branch of the registry index
 commitToRegistryIndex :: PackageName -> RegistryM (Either String Unit)
 commitToRegistryIndex packageName = do
   f <- asks _.commitToRegistryIndex
-  liftAff $ f packageName
+  env <- asks _.environment
+  liftAff $ f env packageName
 
 -- | Upload a package to the backend storage provider
 uploadPackage :: Upload.PackageInfo -> FilePath -> RegistryM Unit
@@ -86,3 +93,6 @@ updatePackagesMetadata pkg metadata = do
 
 readPackagesMetadata :: RegistryM (Map PackageName Metadata)
 readPackagesMetadata = liftEffect <<< Ref.read =<< asks _.packagesMetadata
+
+readEnvironment :: RegistryM Environment
+readEnvironment = asks _.environment

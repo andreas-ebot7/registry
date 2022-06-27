@@ -10,7 +10,7 @@ import Node.FS.Aff as FS
 import Node.Path as Path
 import Registry.API (cloneGitTag, mkMetadataRef, publishToPursuit)
 import Registry.PackageName as PackageName
-import Registry.RegistryM (Env, runRegistryM)
+import Registry.RegistryM (Env, Environment(..), runRegistryM)
 import Registry.Schema (BuildPlan(..))
 import Registry.Version as Version
 
@@ -24,11 +24,12 @@ main = launchAff_ $ do
     env =
       { comment: mempty
       , closeIssue: mempty
-      , commitToTrunk: \_ _ -> pure (Right unit)
-      , commitToRegistryIndex: \_ -> pure (Right unit)
+      , commitToTrunk: \_ _ _ -> pure (Right unit)
+      , commitToRegistryIndex: \_ _ -> pure (Right unit)
       , uploadPackage: mempty
       , deletePackage: mempty
       , packagesMetadata
+      , environment: Local
       }
 
   runRegistryM env do

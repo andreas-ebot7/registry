@@ -95,8 +95,7 @@ readPackage directory packageName = do
     Right (Just arr) -> NEA.fromArray arr
 
 -- | Delete a manifest from a package entry in the registry index. If this is
--- | only manifest in the entry, then the entry file will remain but will be
--- | empty. If no entry exists, then an empty entry file will be created.
+-- | only manifest in the entry, then the entry file will now be empty.
 deleteManifest :: FilePath -> PackageName -> Version -> Aff Unit
 deleteManifest directory name version = do
   existingManifests <- readPackage directory name
@@ -108,7 +107,8 @@ deleteManifest directory name version = do
       previousManifest <- NEA.findIndex (un Manifest >>> _.version >>> eq version) previousManifests
       NEA.deleteAt previousManifest previousManifests
 
-  writePackageEntry directory name modifiedManifests
+  unless (existingManifests == NEA.fromArray modifiedManifests) do
+    writePackageEntry directory name modifiedManifests
 
 -- | Insert a manifest into a package entry in the registry index. If no entry
 -- | yet exists then the entry file will be created.
@@ -127,7 +127,8 @@ insertManifest directory manifest@(Manifest { name, version }) = do
           Just ix ->
             fromMaybe manifests $ NEA.updateAt ix manifest manifests
 
-  writePackageEntry directory name (NEA.toArray modifiedManifests)
+  unless (existingManifests == Just modifiedManifests) do
+    writePackageEntry directory name (NEA.toArray modifiedManifests)
 
 writePackageEntry :: FilePath -> PackageName -> Array Manifest -> Aff Unit
 writePackageEntry indexDirectory packageName manifests = do

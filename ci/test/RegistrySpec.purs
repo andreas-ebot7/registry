@@ -5,7 +5,7 @@ import Registry.Prelude
 import Data.Map as Map
 import Effect.Ref as Ref
 import Effect.Unsafe (unsafePerformEffect)
-import Registry.RegistryM (Env, RegistryM)
+import Registry.RegistryM (Env, Environment(..), RegistryM)
 import Registry.RegistryM as RegistryM
 import Test.Spec as Spec
 import Test.Spec.Reporter as Reporter
@@ -17,11 +17,12 @@ defaultTestEnv :: Env
 defaultTestEnv =
   { closeIssue: mempty
   , comment: mempty
-  , commitToTrunk: \_ _ -> pure (Right unit)
-  , commitToRegistryIndex: \_ -> pure (Right unit)
+  , commitToTrunk: \_ _ _ -> pure (Right unit)
+  , commitToRegistryIndex: \_ _ -> pure (Right unit)
   , deletePackage: mempty
   , uploadPackage: mempty
   , packagesMetadata: unsafePerformEffect (Ref.new Map.empty)
+  , environment: Local
   }
 
 toSpec :: RegistrySpec Unit -> Spec.Spec Unit
