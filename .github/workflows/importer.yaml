@@ -1,21 +1,24 @@
-name: Tests
+name: Registry Importer
 
 on:
   push:
-    branches: [master]
-  pull_request:
+    branches: [trh/daily-import]
 
 jobs:
-  tests:
+  importer:
     runs-on: ubuntu-latest
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.PACCHETTIBOTTI_TOKEN }}
+      PACCHETTIBOTTI_PURSUIT_TOKEN: ${{ secrets.PACCHETTIBOTTI_TOKEN }}
       SPACES_KEY: ${{ secrets.SPACES_KEY }}
       SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
+
     steps:
-      # Setup
       - name: Check out source repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.PACCHETTIBOTTI_TOKEN }}
+          ref: master
 
       - name: Cache NPM dependencies
         uses: actions/cache@v2
@@ -33,24 +36,22 @@ jobs:
             ./ci/.spago
             ./ci/output
 
+      - name: Cache importer artifacts
+        uses: actions/cache@v2
+        with:
+          # This cache directory is meant to be essentially permanent, with cache
+          # expiry implemented in code.
+          key: ${{ runner.os }}-importer-0
+          path: |
+            ./ci/.cache
+
       - name: Install Nix
         uses: cachix/install-nix-action@v16
         with:
           extra_nix_config: |
             access-tokens = github.com=${{ env.GITHUB_TOKEN }}
 
-      # Pro-tempore checks, should go away once new registry is in place
-      - run: nix develop --command 'registry-verify-unique'
-
-      # Checks for the Registry Draft
-      - name: "Check that all Dhall compiles, and examples correctly conform to a Manifest"
-        run: nix develop --command 'registry-verify-dhall'
-
-      - name: "Run tests"
+      - name: "Run registry-importer"
         run: |
           cd ci
-          nix develop --command 'registry-install'
-          nix develop --command 'registry-test'
-
-      - name: "Verify CI code formats"
-        run: cd ci && nix develop --command 'registry-check-format'
+          nix develop --command 'registry-importer'
