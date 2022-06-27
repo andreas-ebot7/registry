@@ -74,7 +74,7 @@ main = launchAff_ $ do
 
   octokit <- liftEffect GitHub.mkOctokit
   packagesMetadata <- mkMetadataRef
-  fetchRegistryIndex
+  fetchRegistryIndex environment
 
   readOperation eventPath >>= case _ of
     -- If the issue body is not just a JSON string, then we don't consider it
@@ -650,10 +650,11 @@ isPackageVersionInMetadata packageName version metadataMap =
     Nothing -> false
     Just metadata -> isVersionInMetadata version metadata
 
-fetchRegistryIndex :: Aff Unit
-fetchRegistryIndex = do
+fetchRegistryIndex :: Environment -> Aff Unit
+fetchRegistryIndex environment = do
   log "Fetching the most recent registry-index..."
   indexExists <- FS.exists indexDir
+  configureGitPacchettiBotti environment
   if indexExists then do
     log "Found the 'registry-index' repo locally, pulling..."
     -- This assumes that we always want to pull from the existing checked-out
@@ -739,8 +740,7 @@ gitGetRefTime ref repoDir = do
 pushToRegistry :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
 pushToRegistry environment packageName path = Except.runExceptT do
   when (environment == CI) do
-    runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
-    runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
+    configureGitPacchettiBotti
 
   log "Committing metadata..."
   runGit_ [ "add", path ] Nothing
@@ -760,8 +760,7 @@ pushToRegistry environment packageName path = Except.runExceptT do
 pushToRegistryIndex :: Environment -> PackageName -> Aff (Either String Unit)
 pushToRegistryIndex environment packageName = Except.runExceptT do
   when (environment == CI) do
-    runGit_ [ "config", "user.name", "PacchettiBotti" ] (Just indexDir)
-    runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] (Just indexDir)
+    configureGitPacchettiBotti
 
   log "Committing index entry..."
   runGit_ [ "add", Index.getIndexPath packageName ] (Just indexDir)
@@ -777,6 +776,11 @@ pushToRegistryIndex environment packageName = Except.runExceptT do
   --     ]
 
   runGit_ [ "push", "origin", branch ] (Just indexDir)
+
+configureGitPacchettiBotti :: Aff Unit
+configureGitPacchettiBotti = do
+  runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
+  runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
 
 runGit_ :: Array String -> Maybe FilePath -> ExceptT String Aff Unit
 runGit_ args cwd = void $ runGit args cwd

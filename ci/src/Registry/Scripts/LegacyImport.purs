@@ -59,7 +59,7 @@ main = Aff.launchAff_ do
       variable to 'true' if you wish to write directly to the registry repository.
       """
 
-  API.fetchRegistryIndex
+  API.fetchRegistryIndex environment
 
   log "Starting import from legacy registries..."
   { registry, reservedNames } <- downloadLegacyRegistry
