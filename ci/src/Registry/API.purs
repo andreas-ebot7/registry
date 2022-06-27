@@ -666,7 +666,7 @@ fetchRegistryIndex = do
       Right _ -> pure unit
   else do
     log "Didn't find the 'registry-index' repo, cloning..."
-    Except.runExceptT (runGit [ "clone", "https://github.com/purescript/registry-index.git", indexDir ] Nothing) >>= case _ of
+    Except.runExceptT (runGit [ "clone", "git@github.com:purescript/registry-index", indexDir ] Nothing) >>= case _ of
       Left err -> Aff.throwError $ Aff.error err
       Right _ -> log "Successfully cloned the 'registry-index' repo"
 
