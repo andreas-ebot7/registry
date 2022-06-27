@@ -18,6 +18,7 @@ defaultTestEnv =
   { closeIssue: mempty
   , comment: mempty
   , commitToTrunk: \_ _ -> pure (Right unit)
+  , commitToRegistryIndex: \_ -> pure (Right unit)
   , deletePackage: mempty
   , uploadPackage: mempty
   , packagesMetadata: unsafePerformEffect (Ref.new Map.empty)

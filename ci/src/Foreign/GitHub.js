@@ -10,18 +10,26 @@ exports.mkOctokit = function () {
   return new Octokit({ auth: process.env.GITHUB_TOKEN });
 };
 
-exports.getReleasesImpl = function (octokit, { owner, repo }) {
-  return octokit
-    .paginate(octokit.repos.listTags, {
-      owner,
-      repo,
-    })
-    .then((data) =>
-      data.map((element) => {
-        return { name: element.name, sha: element.commit.sha };
+exports.getReleasesImpl =
+  (left) =>
+  (right) =>
+  (octokit, { owner, repo }) => {
+    return octokit
+      .paginate(octokit.repos.listTags, {
+        owner,
+        repo,
+        per_page: 100, // Maximum is 100
       })
-    );
-};
+      .then((data) => {
+        const tags = data.map((element) => {
+          return { name: element.name, sha: element.commit.sha };
+        });
+        return right(tags);
+      })
+      .catch((e) => {
+        return left(e.status);
+      });
+  };
 
 exports.getRefCommitImpl = function (octokit, { owner, repo }, ref) {
   return octokit.rest.git
@@ -44,6 +52,11 @@ exports.closeIssueImpl = function (octokit, { owner, repo }, issue_number) {
   });
 };
 
-exports.createCommentImpl = function (octokit, { owner, repo }, issue_number, body) {
+exports.createCommentImpl = function (
+  octokit,
+  { owner, repo },
+  issue_number,
+  body
+) {
   return octokit.issues.createComment({ owner, repo, issue_number, body });
 };

@@ -16,6 +16,7 @@ type Env =
   { comment :: String -> Aff Unit
   , closeIssue :: Aff Unit
   , commitToTrunk :: PackageName -> FilePath -> Aff (Either String Unit)
+  , commitToRegistryIndex :: PackageName -> Aff (Either String Unit)
   , uploadPackage :: Upload.PackageInfo -> FilePath -> Aff Unit
   , deletePackage :: Upload.PackageInfo -> Aff Unit
   , packagesMetadata :: Ref (Map PackageName Metadata)
@@ -57,6 +58,12 @@ commitToTrunk :: PackageName -> FilePath -> RegistryM (Either String Unit)
 commitToTrunk packageName path = do
   f <- asks _.commitToTrunk
   liftAff $ f packageName path
+
+-- | Commit a change to the default branch of the registry index
+commitToRegistryIndex :: PackageName -> RegistryM (Either String Unit)
+commitToRegistryIndex packageName = do
+  f <- asks _.commitToRegistryIndex
+  liftAff $ f packageName
 
 -- | Upload a package to the backend storage provider
 uploadPackage :: Upload.PackageInfo -> FilePath -> RegistryM Unit

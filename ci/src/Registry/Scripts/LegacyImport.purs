@@ -2,6 +2,7 @@ module Registry.Scripts.LegacyImport where
 
 import Registry.Prelude
 
+import Affjax.StatusCode (StatusCode(..))
 import Control.Alternative (guard)
 import Control.Monad.Except as Except
 import Data.Array as Array
@@ -44,7 +45,7 @@ main :: Effect Unit
 main = Aff.launchAff_ do
   _ <- Dotenv.loadFile
 
-  API.checkIndexExists
+  API.fetchRegistryIndex
 
   log "Starting import from legacy registries..."
   { registry, reservedNames } <- downloadLegacyRegistry
@@ -141,6 +142,9 @@ mkEnv packagesMetadata =
   , commitToTrunk: \_ _ -> do
       log "Skipping committing to trunk.."
       pure (Right unit)
+  , commitToRegistryIndex: \_ -> do
+      log "Skipping committing to registry index..."
+      pure (Right unit)
   , uploadPackage: Upload.upload
   , deletePackage: Upload.delete
   , packagesMetadata
@@ -166,12 +170,21 @@ downloadLegacyRegistry = do
       repoCache = Array.fold [ "releases__", address.owner, "__", address.repo ]
       mkError = ResourceError <<< { resource: APIResource GitHubReleases, error: _ }
 
-    releases <- Process.withCache Process.jsonSerializer repoCache (Just $ Hours 24.0) do
+    releases <- Process.withCache Process.jsonSerializer repoCache (Just $ Hours 23.0) do
+      liftAff $ Aff.delay (Aff.Milliseconds 100.0)
       log $ "Fetching releases for package " <> un RawPackageName name
       result <- lift $ try $ GitHub.getReleases octokit address
       case result of
-        Left err -> logShow err *> throwError (mkError $ DecodeError $ Aff.message err)
-        Right v -> pure v
+        Left unexpectedError -> do
+          log ("Unexpected error: " <> show unexpectedError)
+          throwError (mkError $ DecodeError $ Aff.message unexpectedError)
+        Right (Left (StatusCode statusCode)) -> do
+          if statusCode == 404 then
+            log "No tags found."
+          else do
+            log ("BAD STATUS CODE: " <> show statusCode)
+          throwError (mkError $ BadStatus statusCode)
+        Right (Right value) -> pure value
 
     versions <- case NEA.fromArray releases of
       Nothing -> throwError $ mkError $ DecodeError "No releases returned from the GitHub API."

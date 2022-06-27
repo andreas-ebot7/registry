@@ -2,6 +2,7 @@ module Foreign.GitHub where
 
 import Registry.Prelude
 
+import Affjax.StatusCode as Http
 import Control.Promise (Promise)
 import Control.Promise as Promise
 import Data.List as List
@@ -67,10 +68,14 @@ parseRepo = unwrap >>> Parser.runParser do
   let repo = fromMaybe repoWithSuffix $ String.stripSuffix (String.Pattern ".git") repoWithSuffix
   pure { owner, repo }
 
-foreign import getReleasesImpl :: EffectFn2 Octokit Address (Promise (Array Tag))
+foreign import getReleasesImpl
+  :: (Int -> Either Http.StatusCode (Array Tag))
+  -> (Array Tag -> Either Http.StatusCode (Array Tag))
+  -> EffectFn2 Octokit Address (Promise (Either Http.StatusCode (Array Tag)))
 
-getReleases :: Octokit -> Address -> Aff (Array Tag)
-getReleases octokit address = Promise.toAffE $ runEffectFn2 getReleasesImpl octokit address
+getReleases :: Octokit -> Address -> Aff (Either Http.StatusCode (Array Tag))
+getReleases octokit address = Promise.toAffE do
+  runEffectFn2 (getReleasesImpl (Left <<< Http.StatusCode) Right) octokit address
 
 foreign import getRefCommitImpl :: EffectFn3 Octokit Address String (Promise String)
 

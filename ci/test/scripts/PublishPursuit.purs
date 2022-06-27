@@ -25,6 +25,7 @@ main = launchAff_ $ do
       { comment: mempty
       , closeIssue: mempty
       , commitToTrunk: \_ _ -> pure (Right unit)
+      , commitToRegistryIndex: \_ -> pure (Right unit)
       , uploadPackage: mempty
       , deletePackage: mempty
       , packagesMetadata

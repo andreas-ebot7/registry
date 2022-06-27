@@ -1,7 +1,9 @@
 module Registry.Index
   ( RegistryIndex
-  , readRegistryIndex
+  , deleteManifest
+  , getIndexPath
   , insertManifest
+  , readRegistryIndex
   ) where
 
 import Registry.Prelude
@@ -92,17 +94,31 @@ readPackage directory packageName = do
     Right Nothing -> Nothing
     Right (Just arr) -> NEA.fromArray arr
 
+-- | Delete a manifest from a package entry in the registry index. If this is
+-- | only manifest in the entry, then the entry file will remain but will be
+-- | empty. If no entry exists, then an empty entry file will be created.
+deleteManifest :: FilePath -> PackageName -> Version -> Aff Unit
+deleteManifest directory name version = do
+  existingManifests <- readPackage directory name
+
+  let
+    modifiedManifests :: Array Manifest
+    modifiedManifests = fromMaybe [] do
+      previousManifests <- existingManifests
+      previousManifest <- NEA.findIndex (un Manifest >>> _.version >>> eq version) previousManifests
+      NEA.deleteAt previousManifest previousManifests
+
+  writePackageEntry directory name modifiedManifests
+
+-- | Insert a manifest into a package entry in the registry index. If no entry
+-- | yet exists then the entry file will be created.
 insertManifest :: FilePath -> Manifest -> Aff Unit
 insertManifest directory manifest@(Manifest { name, version }) = do
-  let
-    manifestPath = Path.concat [ directory, getIndexPath name ]
-    manifestDirectory = Path.dirname manifestPath
-
-  existingManifest <- readPackage directory name
+  existingManifests <- readPackage directory name
 
   let
     modifiedManifests :: NonEmptyArray Manifest
-    modifiedManifests = case existingManifest of
+    modifiedManifests = case existingManifests of
       Nothing -> NEA.singleton manifest
       Just manifests -> do
         case NEA.findIndex (un Manifest >>> _.version >>> eq version) manifests of
@@ -111,12 +127,22 @@ insertManifest directory manifest@(Manifest { name, version }) = do
           Just ix ->
             fromMaybe manifests $ NEA.updateAt ix manifest manifests
 
-    contents :: String
-    contents =
+  writePackageEntry directory name (NEA.toArray modifiedManifests)
+
+writePackageEntry :: FilePath -> PackageName -> Array Manifest -> Aff Unit
+writePackageEntry indexDirectory packageName manifests = do
+  let
+    entryContents :: String
+    entryContents =
       String.joinWith "\n"
         $ map (Json.encode >>> Json.stringify)
-        $ Array.sortBy (comparing (un Manifest >>> _.version))
-        $ Array.fromFoldable modifiedManifests
+        $ Array.sortBy (comparing (un Manifest >>> _.version)) manifests
 
-  FS.Extra.ensureDirectory manifestDirectory
-  FS.writeTextFile ASCII manifestPath contents
+    entryFilePath :: FilePath
+    entryFilePath = Path.concat [ indexDirectory, getIndexPath packageName ]
+
+    entryDirectoryPath :: FilePath
+    entryDirectoryPath = Path.dirname entryFilePath
+
+  FS.Extra.ensureDirectory entryDirectoryPath
+  FS.writeTextFile ASCII entryFilePath entryContents

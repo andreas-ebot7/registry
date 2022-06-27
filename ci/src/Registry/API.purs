@@ -51,7 +51,7 @@ import Registry.Json as Json
 import Registry.PackageName (PackageName)
 import Registry.PackageName as PackageName
 import Registry.PackageUpload as Upload
-import Registry.RegistryM (Env, RegistryM, closeIssue, comment, commitToTrunk, deletePackage, readPackagesMetadata, runRegistryM, throwWithComment, updatePackagesMetadata, uploadPackage)
+import Registry.RegistryM (Env, RegistryM, closeIssue, comment, commitToRegistryIndex, commitToTrunk, deletePackage, readPackagesMetadata, runRegistryM, throwWithComment, updatePackagesMetadata, uploadPackage)
 import Registry.SSH as SSH
 import Registry.Schema (AuthenticatedData(..), AuthenticatedOperation(..), BuildPlan(..), Location(..), Manifest(..), Metadata, Operation(..), UpdateData, addVersionToMetadata, isVersionInMetadata, mkNewMetadata, unpublishVersionInMetadata)
 import Registry.Scripts.LegacyImport.Error (ImportError(..))
@@ -69,7 +69,7 @@ main = launchAff_ $ do
       >>= maybe (throw "GITHUB_EVENT_PATH not defined in the environment") pure
   octokit <- liftEffect GitHub.mkOctokit
   packagesMetadata <- mkMetadataRef
-  checkIndexExists
+  fetchRegistryIndex
 
   readOperation eventPath >>= case _ of
     -- If the issue body is not just a JSON string, then we don't consider it
@@ -203,10 +203,17 @@ runOperation operation = case operation of
 
                 updatedMetadata = unpublishVersionInMetadata unpublishVersion unpublishedMetadata metadata
 
-              writeMetadata packageName updatedMetadata
-                { commitFailed: \_ -> "Unpublish succeeded, but committing metadata failed.\ncc @purescript/packaging"
-                , commitSucceeded: "Successfully unpublished!"
-                }
+              writeMetadata packageName updatedMetadata >>= case _ of
+                Left _ -> throwWithComment "Unpublish succeeded, but committing metadata failed.\ncc @purescript/packaging"
+                Right _ -> pure unit
+
+              writeDeleteIndex packageName unpublishVersion >>= case _ of
+                Left _ -> comment "Unpublish succeeded, but committing to the registry index failed.\ncc @purescript/packaging"
+                Right _ -> pure unit
+
+              comment "Successfully unpublished!"
+
+      closeIssue
 
     Transfer { packageName, newPackageLocation } -> do
       metadata <- readMetadata packageName
@@ -233,10 +240,11 @@ runOperation operation = case operation of
                 ]
             Right _ -> do
               let updatedMetadata = metadata { location = newPackageLocation }
-              writeMetadata packageName updatedMetadata
-                { commitFailed: \_ -> "Transferred package location, but failed to commit metadata.\ncc @purescript/packaging"
-                , commitSucceeded: "Successfully transferred your package!"
-                }
+              writeMetadata packageName updatedMetadata >>= case _ of
+                Left _ -> throwWithComment "Transferred package location, but failed to commit metadata.\ncc @purescript/packaging"
+                Right _ -> comment "Successfully transferred your package!"
+
+      closeIssue
 
 metadataDir :: FilePath
 metadataDir = "../metadata"
@@ -342,24 +350,20 @@ addOrUpdate { updateRef, buildPlan, packageName } inputMetadata = do
   log $ "Adding the new version " <> Version.printVersion newVersion <> " to the package metadata file (hashes, etc)"
   log $ "Hash for ref " <> show updateRef <> " was " <> show hash
   let newMetadata = addVersionToMetadata newVersion { hash, ref: updateRef, publishedTime, bytes } metadata
-  writeMetadata packageName newMetadata
-    { commitFailed: \_ -> "Package uploaded, but committing metadata failed.\ncc: @purescript/packaging"
-    , commitSucceeded: "Successfully uploaded package to the registry! 🎉 🚀"
-    }
+  writeMetadata packageName newMetadata >>= case _ of
+    Left _ -> throwWithComment "Package uploaded, but committing metadata failed.\ncc: @purescript/packaging"
+    Right _ -> comment "Successfully uploaded package to the registry! 🎉 🚀"
 
   closeIssue
 
-  -- Optional steps below:
-  -- TODO don't fail the pipeline if one of them fails
+  -- We write to the registry index if possible. If this fails, the packaging team
+  -- should manually insert the entry.
+  writeInsertIndex manifest >>= case _ of
+    Left _ -> comment "Package uploaded, but committing to the registry index failed.\ncc: @purescript/packaging"
+    Right _ -> pure unit
 
-  -- Add to the registry index
-  -- TODO: commit the registry-index
-  liftAff $ Index.insertManifest indexDir manifest
-
-  unless isLegacyImport do
-    -- TODO: handle addToPackageSet: we'll try to add it to the latest set and build (see #156)
-    pure unit
-
+  -- We publish to Pursuit if possible. If this fails, then we don't do anything
+  -- to resolve the issue (the user can try it again themselves).
   unless isLegacyImport do
     log "Uploading to Pursuit"
     publishToPursuit { packageSourceDir, buildPlan }
@@ -604,6 +608,7 @@ mkEnv octokit packagesMetadata issue =
   { comment: GitHub.createComment octokit issue
   , closeIssue: GitHub.closeIssue octokit issue
   , commitToTrunk: pushToMaster
+  , commitToRegistryIndex: pushToRegistryIndex
   , uploadPackage: Upload.upload
   , deletePackage: Upload.delete
   , packagesMetadata
@@ -639,11 +644,22 @@ isPackageVersionInMetadata packageName version metadataMap =
     Nothing -> false
     Just metadata -> isVersionInMetadata version metadata
 
-checkIndexExists :: Aff Unit
-checkIndexExists = do
-  log "Checking if the registry-index is present..."
-  whenM (not <$> FS.exists indexDir) do
-    error "Didn't find the 'registry-index' repo, cloning..."
+fetchRegistryIndex :: Aff Unit
+fetchRegistryIndex = do
+  log "Fetching the most recent registry-index..."
+  indexExists <- FS.exists indexDir
+  if indexExists then do
+    log "Found the 'registry-index' repo locally, pulling..."
+    -- This assumes that we always want to pull from the existing checked-out
+    -- branch. In CI this should always be 'main'. On local runs it is possible
+    -- that we have checked out a branch, and that will be maintained. If we
+    -- want to enforce this is always run on 'main' then we can always run
+    -- 'git name-ref HEAD' and verify that the output string contains 'main'.
+    Except.runExceptT (runGit [ "pull" ] (Just indexDir)) >>= case _ of
+      Left err -> Aff.throwError $ Aff.error err
+      Right _ -> pure unit
+  else do
+    log "Didn't find the 'registry-index' repo, cloning..."
     Except.runExceptT (runGit [ "clone", "https://github.com/purescript/registry-index.git", indexDir ] Nothing) >>= case _ of
       Left err -> Aff.throwError $ Aff.error err
       Right _ -> log "Successfully cloned the 'registry-index' repo"
@@ -722,6 +738,19 @@ pushToMaster packageName path = Except.runExceptT do
   _ <- runGit [ "commit", "-m", "Update metadata for package " <> PackageName.print packageName ] Nothing
   _ <- runGit [ "push", "origin", "master" ] Nothing
   pure unit
+
+pushToRegistryIndex :: PackageName -> Aff (Either String Unit)
+pushToRegistryIndex packageName = Except.runExceptT do
+  _ <- runGit [ "config", "user.name", "PacchettiBotti" ] Nothing
+  _ <- runGit [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
+
+  let
+    runRegistryGit args = void $ runGit args (Just indexDir)
+    packagePath = Index.getIndexPath packageName
+
+  runRegistryGit [ "add", packagePath ]
+  runRegistryGit [ "commit", "-m", "Update index for package " <> PackageName.print packageName ]
+  runRegistryGit [ "push", "origin", "main" ]
 
 runGit :: Array String -> Maybe FilePath -> ExceptT String Aff String
 runGit args cwd = ExceptT do
@@ -841,14 +870,22 @@ readMetadata packageName { noMetadata } = do
     Nothing -> throwWithComment "Couldn't read metadata file for your package.\ncc @purescript/packaging"
     Just m -> pure m
 
-writeMetadata :: PackageName -> Metadata -> { commitFailed :: String -> String, commitSucceeded :: String } -> RegistryM Unit
-writeMetadata packageName metadata { commitFailed, commitSucceeded } = do
+writeMetadata :: PackageName -> Metadata -> RegistryM (Either String Unit)
+writeMetadata packageName metadata = do
   let metadataFilePath = metadataFile packageName
   liftAff $ Json.writeJsonFile metadataFilePath metadata
   updatePackagesMetadata packageName metadata
-  commitToTrunk packageName metadataFilePath >>= case _ of
-    Left err -> comment (commitFailed err)
-    Right _ -> comment commitSucceeded
+  commitToTrunk packageName metadataFilePath
+
+writeInsertIndex :: Manifest -> RegistryM (Either String Unit)
+writeInsertIndex manifest@(Manifest { name }) = do
+  liftAff $ Index.insertManifest indexDir manifest
+  commitToRegistryIndex name
+
+writeDeleteIndex :: PackageName -> Version -> RegistryM (Either String Unit)
+writeDeleteIndex name version = do
+  liftAff $ Index.deleteManifest indexDir name version
+  commitToRegistryIndex name
 
 -- | Call a specific version of the PureScript compiler
 callCompiler_ :: { version :: String, args :: Array String, cwd :: Maybe FilePath } -> Aff Unit
