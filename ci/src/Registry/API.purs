@@ -654,7 +654,10 @@ fetchRegistryIndex :: Environment -> Aff Unit
 fetchRegistryIndex environment = do
   log "Fetching the most recent registry-index..."
   indexExists <- FS.exists indexDir
-  configureGitPacchettiBotti environment
+  when (environment == CI) do
+    Except.runExceptT configureGitPacchettiBotti >>= case _ of
+      Left err -> Aff.throwError $ Aff.error err
+      Right _ -> pure unit
   if indexExists then do
     log "Found the 'registry-index' repo locally, pulling..."
     -- This assumes that we always want to pull from the existing checked-out
@@ -777,7 +780,7 @@ pushToRegistryIndex environment packageName = Except.runExceptT do
 
   runGit_ [ "push", "origin", branch ] (Just indexDir)
 
-configureGitPacchettiBotti :: Aff Unit
+configureGitPacchettiBotti :: ExceptT String Aff Unit
 configureGitPacchettiBotti = do
   runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
   runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
