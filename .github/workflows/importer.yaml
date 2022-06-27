@@ -54,4 +54,5 @@ jobs:
       - name: "Run registry-importer"
         run: |
           cd ci
+          nix develop --command 'registry-install'
           nix develop --command 'registry-importer'
