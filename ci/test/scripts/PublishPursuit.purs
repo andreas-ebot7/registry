@@ -30,6 +30,7 @@ main = launchAff_ $ do
       , deletePackage: mempty
       , packagesMetadata
       , environment: Local
+      , authToken: mempty
       }
 
   runRegistryM env do

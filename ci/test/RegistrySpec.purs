@@ -23,6 +23,7 @@ defaultTestEnv =
   , uploadPackage: mempty
   , packagesMetadata: unsafePerformEffect (Ref.new Map.empty)
   , environment: Local
+  , authToken: ""
   }
 
 toSpec :: RegistrySpec Unit -> Spec.Spec Unit

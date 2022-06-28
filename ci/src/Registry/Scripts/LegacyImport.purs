@@ -59,7 +59,16 @@ main = Aff.launchAff_ do
       variable to 'true' if you wish to write directly to the registry repository.
       """
 
-  API.fetchRegistryIndex environment
+  authToken <- liftEffect $ Env.lookupEnv "PACCHETTIBOTTI_TOKEN" >>= case _ of
+    Nothing -> unsafeCrashWith
+      """
+      Please set the 'PACCHETTIBOTTI_TOKEN' environment variable in your .env
+      file or manually via export PACCHETTIBOTTI=<token> when running the
+      registry importer.
+      """
+    Just value -> pure value
+
+  API.fetchRegistryIndex { environment, authToken }
 
   log "Starting import from legacy registries..."
   { registry, reservedNames } <- downloadLegacyRegistry
@@ -103,7 +112,7 @@ main = Aff.launchAff_ do
   packagesMetadataRef <- API.mkMetadataRef
 
   log "Starting upload..."
-  runRegistryM (mkEnv environment packagesMetadataRef) do
+  runRegistryM (mkEnv environment authToken packagesMetadataRef) do
     log "Adding metadata for reserved package names"
     forWithIndex_ (Map.union disabledPackages reservedNames) \package repo -> do
       let metadata = { location: repo, owners: Nothing, published: Map.empty, unpublished: Map.empty }
@@ -141,8 +150,8 @@ main = Aff.launchAff_ do
 
   log "Done!"
 
-mkEnv :: Environment -> Ref (Map PackageName Metadata) -> Env
-mkEnv environment packagesMetadata =
+mkEnv :: Environment -> String -> Ref (Map PackageName Metadata) -> Env
+mkEnv environment authToken packagesMetadata =
   { comment: \err -> error err
   , closeIssue: log "Skipping GitHub issue closing, we're running locally.."
   , commitToTrunk: API.pushToRegistry
@@ -151,6 +160,7 @@ mkEnv environment packagesMetadata =
   , deletePackage: Upload.delete
   , packagesMetadata
   , environment
+  , authToken
   }
 
 downloadLegacyRegistry :: Aff { registry :: RegistryIndex, reservedNames :: Map PackageName Location }

@@ -25,6 +25,7 @@ type Env =
   , deletePackage :: Upload.PackageInfo -> Aff Unit
   , packagesMetadata :: Ref (Map PackageName Metadata)
   , environment :: Environment
+  , authToken :: String
   }
 
 newtype RegistryM a = RegistryM (ReaderT Env Aff a)
@@ -96,3 +97,6 @@ readPackagesMetadata = liftEffect <<< Ref.read =<< asks _.packagesMetadata
 
 readEnvironment :: RegistryM Environment
 readEnvironment = asks _.environment
+
+readAuthToken :: RegistryM String
+readAuthToken = asks _.authToken

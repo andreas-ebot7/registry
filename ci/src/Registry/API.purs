@@ -44,14 +44,13 @@ import Node.FS.Aff as FS
 import Node.FS.Stats as FS.Stats
 import Node.Path as Path
 import Node.Process as Env
-import Node.Process as Node.Process
 import Registry.Hash as Hash
 import Registry.Index as Index
 import Registry.Json as Json
 import Registry.PackageName (PackageName)
 import Registry.PackageName as PackageName
 import Registry.PackageUpload as Upload
-import Registry.RegistryM (Env, Environment(..), RegistryM, closeIssue, comment, commitToRegistryIndex, commitToTrunk, deletePackage, readPackagesMetadata, runRegistryM, throwWithComment, updatePackagesMetadata, uploadPackage)
+import Registry.RegistryM (Env, Environment(..), RegistryM, closeIssue, comment, commitToRegistryIndex, commitToTrunk, deletePackage, readAuthToken, readPackagesMetadata, runRegistryM, throwWithComment, updatePackagesMetadata, uploadPackage)
 import Registry.SSH as SSH
 import Registry.Schema (AuthenticatedData(..), AuthenticatedOperation(..), BuildPlan(..), Location(..), Manifest(..), Metadata, Operation(..), UpdateData, addVersionToMetadata, isVersionInMetadata, mkNewMetadata, unpublishVersionInMetadata)
 import Registry.Scripts.LegacyImport.Error (ImportError(..))
@@ -72,9 +71,15 @@ main = launchAff_ $ do
     Just "true" -> pure CI
     _ -> pure Local
 
+  authToken <- liftEffect $ Env.lookupEnv "PACCHETTIBOTTI_TOKEN" >>= case _ of
+    Nothing -> do
+      throw "PACCHETTIBOTTI_TOKEN not defined in the environment"
+    Just token ->
+      pure token
+
   octokit <- liftEffect GitHub.mkOctokit
   packagesMetadata <- mkMetadataRef
-  fetchRegistryIndex environment
+  fetchRegistryIndex { environment, authToken }
 
   readOperation eventPath >>= case _ of
     -- If the issue body is not just a JSON string, then we don't consider it
@@ -83,7 +88,7 @@ main = launchAff_ $ do
     NotJson ->
       pure unit
 
-    MalformedJson issue err -> runRegistryM (mkEnv environment octokit packagesMetadata issue) do
+    MalformedJson issue err -> runRegistryM (mkEnv environment authToken octokit packagesMetadata issue) do
       comment $ Array.fold
         [ "The JSON input for this package update is malformed:"
         , newlines 2
@@ -93,7 +98,7 @@ main = launchAff_ $ do
         ]
 
     DecodedOperation issue op ->
-      runRegistryM (mkEnv environment octokit packagesMetadata issue) (runOperation op)
+      runRegistryM (mkEnv environment authToken octokit packagesMetadata issue) (runOperation op)
 
 data OperationDecoding
   = NotJson
@@ -547,14 +552,8 @@ publishToPursuit { packageSourceDir, buildPlan: buildPlan@(BuildPlan { compiler,
           Right json ->
             pure json
 
-  authToken <- liftEffect (Node.Process.lookupEnv "PACCHETTIBOTTI_PURSUIT_TOKEN") >>= case _ of
-    Nothing -> do
-      logShow =<< liftEffect Node.Process.getEnv
-      throwWithComment "Publishing failed because there is no available auth token. cc: @purescript/packaging"
-    Just token ->
-      pure token
-
   log "Pushing to Pursuit"
+  authToken <- readAuthToken
   result <- liftAff $ Http.request
     { content: Just $ RequestBody.json publishJson
     , headers:
@@ -608,8 +607,8 @@ wget url path = do
     NodeProcess.Normally 0 -> pure unit
     _ -> throwWithComment $ "Error while fetching tarball: " <> result.stderr
 
-mkEnv :: Environment -> GitHub.Octokit -> MetadataRef -> IssueNumber -> Env
-mkEnv environment octokit packagesMetadata issue =
+mkEnv :: Environment -> String -> GitHub.Octokit -> MetadataRef -> IssueNumber -> Env
+mkEnv environment authToken octokit packagesMetadata issue =
   { comment: GitHub.createComment octokit issue
   , closeIssue: GitHub.closeIssue octokit issue
   , commitToTrunk: pushToRegistry
@@ -618,6 +617,7 @@ mkEnv environment octokit packagesMetadata issue =
   , deletePackage: Upload.delete
   , packagesMetadata
   , environment
+  , authToken
   }
 
 type MetadataMap = Map PackageName Metadata
@@ -650,8 +650,8 @@ isPackageVersionInMetadata packageName version metadataMap =
     Nothing -> false
     Just metadata -> isVersionInMetadata version metadata
 
-fetchRegistryIndex :: Environment -> Aff Unit
-fetchRegistryIndex environment = do
+fetchRegistryIndex :: { environment :: Environment, authToken :: String } -> Aff Unit
+fetchRegistryIndex { environment, authToken } = do
   log "Fetching the most recent registry-index..."
   indexExists <- FS.exists indexDir
   when (environment == CI) do
@@ -670,7 +670,8 @@ fetchRegistryIndex environment = do
       Right _ -> pure unit
   else do
     log "Didn't find the 'registry-index' repo, cloning..."
-    Except.runExceptT (runGit [ "clone", "git@github.com:purescript/registry-index", indexDir ] Nothing) >>= case _ of
+    let cloneUrl = Array.fold [ "https://pacchettibotti:", authToken, "@github.com/purescript/registry-index" ]
+    Except.runExceptT (runGit [ "clone", cloneUrl, indexDir ] Nothing) >>= case _ of
       Left err -> Aff.throwError $ Aff.error err
       Right _ -> log "Successfully cloned the 'registry-index' repo"
 
