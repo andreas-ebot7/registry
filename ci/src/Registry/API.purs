@@ -655,7 +655,7 @@ fetchRegistryIndex { environment, authToken } = do
   log "Fetching the most recent registry-index..."
   indexExists <- FS.exists indexDir
   when (environment == CI) do
-    Except.runExceptT configureGitPacchettiBotti >>= case _ of
+    Except.runExceptT (configureGitPacchettiBotti Nothing) >>= case _ of
       Left err -> Aff.throwError $ Aff.error err
       Right _ -> pure unit
   if indexExists then do
@@ -743,7 +743,8 @@ gitGetRefTime ref repoDir = do
 
 pushToRegistry :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
 pushToRegistry environment packageName path = Except.runExceptT do
-  configureGitPacchettiBotti
+  when (environment == CI) do
+    configureGitPacchettiBotti Nothing
 
   log "Committing metadata..."
   runGit_ [ "add", path ] Nothing
@@ -763,7 +764,7 @@ pushToRegistry environment packageName path = Except.runExceptT do
 pushToRegistryIndex :: Environment -> PackageName -> Aff (Either String Unit)
 pushToRegistryIndex environment packageName = Except.runExceptT do
   when (environment == CI) do
-    configureGitPacchettiBotti
+    configureGitPacchettiBotti (Just indexDir)
 
   log "Committing index entry..."
   runGit_ [ "add", Index.getIndexPath packageName ] (Just indexDir)
@@ -780,10 +781,10 @@ pushToRegistryIndex environment packageName = Except.runExceptT do
 
   runGit_ [ "push", "origin", branch ] (Just indexDir)
 
-configureGitPacchettiBotti :: ExceptT String Aff Unit
-configureGitPacchettiBotti = do
-  runGit_ [ "config", "user.name", "PacchettiBotti" ] Nothing
-  runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] Nothing
+configureGitPacchettiBotti :: Maybe FilePath -> ExceptT String Aff Unit
+configureGitPacchettiBotti path = do
+  runGit_ [ "config", "user.name", "PacchettiBotti" ] path
+  runGit_ [ "config", "user.email", "<pacchettibotti@ferrai.io>" ] path
 
 runGit_ :: Array String -> Maybe FilePath -> ExceptT String Aff Unit
 runGit_ args cwd = void $ runGit args cwd
