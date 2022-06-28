@@ -55,4 +55,6 @@ jobs:
         run: |
           cd ci
           nix develop --command 'registry-install'
+          git config user.name "PacchettiBotti"
+          git config user.email "<pacchettibotti@ferrai.io"
           nix develop --command 'registry-importer'

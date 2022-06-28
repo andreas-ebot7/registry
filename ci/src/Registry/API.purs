@@ -743,8 +743,7 @@ gitGetRefTime ref repoDir = do
 
 pushToRegistry :: Environment -> PackageName -> FilePath -> Aff (Either String Unit)
 pushToRegistry environment packageName path = Except.runExceptT do
-  when (environment == CI) do
-    configureGitPacchettiBotti
+  configureGitPacchettiBotti
 
   log "Committing metadata..."
   runGit_ [ "add", path ] Nothing

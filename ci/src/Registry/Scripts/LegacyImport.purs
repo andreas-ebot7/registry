@@ -63,7 +63,7 @@ main = Aff.launchAff_ do
     Nothing -> unsafeCrashWith
       """
       Please set the 'PACCHETTIBOTTI_TOKEN' environment variable in your .env
-      file or manually via export PACCHETTIBOTTI=<token> when running the
+      file or manually via export PACCHETTIBOTTI_TOKEN=<token> when running the
       registry importer.
       """
     Just value -> pure value
