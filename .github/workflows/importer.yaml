@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.PACCHETTIBOTTI_TOKEN }}
-      PACCHETTIBOTTI_PURSUIT_TOKEN: ${{ secrets.PACCHETTIBOTTI_TOKEN }}
+      PACCHETTIBOTTI_TOKEN: ${{ secrets.PACCHETTIBOTTI_TOKEN }}
       SPACES_KEY: ${{ secrets.SPACES_KEY }}
       SPACES_SECRET: ${{ secrets.SPACES_SECRET }}
 
